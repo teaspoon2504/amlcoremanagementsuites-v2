@@ -378,28 +378,14 @@ function buildHistoryEntry(type, changes) {
 
 
 function renderAlerts() {
-    const currentWeekGlobal  = getTimelineWeekInfo().globalWeekIndex;
-
     lagNames = []; onProgressNames = []; doneNames = []; notStartNames = [];
 
     programs.forEach(p => {
-        let hasTimeline = false, allCompleted = true, hasStarted = false, isLag = false;
-        p.subPrograms.forEach(sub => {
-            const scheduled = sub.timeline.map((v, i) => v === 1 ? i : null).filter(v => v !== null);
-            if (scheduled.length > 0) {
-                hasTimeline = true;
-                scheduled.forEach(w => {
-                    const isDone = sub.completed && sub.completed.includes(w);
-                    if (w <= currentWeekGlobal) hasStarted = true;
-                    if (w <= currentWeekGlobal && !isDone) isLag = true;
-                    if (!isDone) allCompleted = false;
-                });
-            }
-        });
-        if (!hasTimeline || !hasStarted) notStartNames.push(p);
-        else if (isLag)                  lagNames.push(p);
-        else if (allCompleted)           doneNames.push(p);
-        else                             onProgressNames.push(p);
+        const st = getProgramStatus(p);
+        if (st === 'notstart') notStartNames.push(p);
+        else if (st === 'lag') lagNames.push(p);
+        else if (st === 'done') doneNames.push(p);
+        else onProgressNames.push(p);
     });
 
     const renderList = (elId, names, colorClass, icon) => {
@@ -442,27 +428,8 @@ function renderTagBreakdown() {
     if (hygCount) hygCount.textContent = hyg.length;
     if (bauCount) bauCount.textContent = bau.length;
 
-    // Helper: tentukan status satu program (sama logika renderAlerts)
-    const currentWeekGlobal = getTimelineWeekInfo().globalWeekIndex;
-
     function getStatus(p) {
-        let hasTimeline = false, allCompleted = true, hasStarted = false, isLag = false;
-        p.subPrograms.forEach(sub => {
-            const scheduled = sub.timeline.map((v, i) => v === 1 ? i : null).filter(v => v !== null);
-            if (scheduled.length > 0) {
-                hasTimeline = true;
-                scheduled.forEach(w => {
-                    const isDone = sub.completed && sub.completed.includes(w);
-                    if (w <= currentWeekGlobal) hasStarted = true;
-                    if (w <= currentWeekGlobal && !isDone) isLag = true;
-                    if (!isDone) allCompleted = false;
-                });
-            }
-        });
-        if (!hasTimeline || !hasStarted) return 'notstart';
-        if (isLag)        return 'lag';
-        if (allCompleted) return 'done';
-        return 'ongoing';
+        return getProgramStatus(p);
     }
 
     // Helper: render list — sorted A-Z, tampilkan PIC/team
@@ -1028,22 +995,39 @@ const STATUS_META = {
 
 function getProgramStatus(p) {
     const currentWeekGlobal = getTimelineWeekInfo().globalWeekIndex;
-    let hasTimeline = false, allCompleted = true, hasStarted = false, isLag = false;
+    if (!p.subPrograms || p.subPrograms.length === 0) return 'notstart';
+
+    let hasTimeline = false;
+    let hasStarted = false;
+    let isLag = false;
+    let isOngoing = false;
+    let allUpToNowCompleted = true;
+
     p.subPrograms.forEach(function(sub) {
-        var scheduled = sub.timeline.map(function(v, i) { return v === 1 ? i : null; }).filter(function(v) { return v !== null; });
-        if (scheduled.length > 0) {
-            hasTimeline = true;
-            scheduled.forEach(function(w) {
-                var isDone = sub.completed && sub.completed.includes(w);
-                if (w <= currentWeekGlobal) hasStarted = true;
-                if (w <= currentWeekGlobal && !isDone) isLag = true;
-                if (!isDone) allCompleted = false;
-            });
-        }
+        if (!sub.timeline) return;
+        sub.timeline.forEach(function(v, w) {
+            if (v === 1) {
+                hasTimeline = true;
+                if (w <= currentWeekGlobal) {
+                    hasStarted = true;
+                    const isDone = sub.completed && sub.completed.includes(w);
+                    if (!isDone) {
+                        allUpToNowCompleted = false;
+                        if (w < currentWeekGlobal) {
+                            isLag = true;
+                        } else if (w === currentWeekGlobal) {
+                            isOngoing = true;
+                        }
+                    }
+                }
+            }
+        });
     });
+
     if (!hasTimeline || !hasStarted) return 'notstart';
-    if (isLag)        return 'lag';
-    if (allCompleted) return 'done';
+    if (isLag) return 'lag';
+    if (isOngoing) return 'ongoing';
+    if (allUpToNowCompleted) return 'done';
     return 'ongoing';
 }
 
