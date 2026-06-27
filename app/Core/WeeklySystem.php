@@ -63,6 +63,15 @@ class WeeklySystem {
      * @param string|null $inputDate Format YYYY-MM-DD (Default: hari ini)
      * @return array
      */
+    public static function getWeeksInMonthCount(int $year, int $month): int {
+        $prevM = ($month == 1) ? 12 : $month - 1;
+        $prevY = ($month == 1) ? $year - 1 : $year;
+        $start = self::getLastFridayOfMonth($prevY, $prevM);
+        $end = self::getLastFridayOfMonth($year, $month);
+        $days = (int)round(($end->getTimestamp() - $start->getTimestamp()) / 86400);
+        return (int)round($days / 7);
+    }
+
     public static function getWeekFromDate(?string $inputDate = null): array {
         if (!$inputDate) {
             $inputDate = date('Y-m-d');
@@ -112,15 +121,20 @@ class WeeklySystem {
         $currentWeekEnd = clone $currentWeekStart;
         $currentWeekEnd->modify('+6 days');
         
+        $maxW = self::getWeeksInMonthCount($assignedYear, $assignedMonth);
+        $globalWeekIndex = (($assignedMonth - 1) * 5) + min($weekNumber - 1, $maxW - 1);
+
         return [
-            'input_date'      => $dt->format('Y-m-d'),
-            'week'            => $weekNumber,
-            'month'           => $assignedMonth,
-            'month_name'      => self::getIndonesianMonthName($assignedMonth),
-            'year'            => $assignedYear,
-            'label'           => "Week {$weekNumber} " . self::getIndonesianMonthName($assignedMonth) . " {$assignedYear}",
-            'week_start_date' => $currentWeekStart->format('Y-m-d'),
-            'week_end_date'   => $currentWeekEnd->format('Y-m-d')
+            'input_date'        => $dt->format('Y-m-d'),
+            'week'              => $weekNumber,
+            'month'             => $assignedMonth,
+            'month_name'        => self::getIndonesianMonthName($assignedMonth),
+            'year'              => $assignedYear,
+            'label'             => "Week {$weekNumber} " . self::getIndonesianMonthName($assignedMonth) . " {$assignedYear}",
+            'week_start_date'   => $currentWeekStart->format('Y-m-d'),
+            'week_end_date'     => $currentWeekEnd->format('Y-m-d'),
+            'weeks_in_month'    => $maxW,
+            'global_week_index' => $globalWeekIndex
         ];
     }
 

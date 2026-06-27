@@ -90,13 +90,20 @@ async function loadFromDatabase() {
         var seenFront = {};
         data.forEach(function(p) {
             var key = sid(p.id);
-            if (!seenFront[key]) { seenFront[key] = true; programs.push(p); }
+            if (!seenFront[key]) {
+                if (p.subPrograms) p.subPrograms.forEach(sub => normalizeSubProgramTimeline(sub));
+                seenFront[key] = true;
+                programs.push(p);
+            }
         });
     } catch (e) {
         // Fallback: localStorage atau seed data
         var stored = localStorage.getItem(STORAGE_KEY);
         programs.length = 0;
-        (stored ? JSON.parse(stored) : getSeedData()).forEach(function(p) { programs.push(p); });
+        (stored ? JSON.parse(stored) : getSeedData()).forEach(function(p) {
+            if (p.subPrograms) p.subPrograms.forEach(sub => normalizeSubProgramTimeline(sub));
+            programs.push(p);
+        });
 
         // Tampilkan notif jika bukan abort biasa
         if (e && e.name !== 'AbortError') {
@@ -144,8 +151,8 @@ function getSeedData() {
         comment: 'Draft awal sedang dalam proses review direksi.',
         subPrograms: [{
             name: 'Finalisasi Draft SK Struktur Management',
-            timeline: [1,1,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
-                       0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+            timeline: [1,1,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0,
+                       0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
             completed: [0, 1]
         }]
     }];
@@ -156,7 +163,7 @@ function getSeedData() {
 // CALCULATIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
-function calculateProgress(p, limitWeek = 48) {
+function calculateProgress(p, limitWeek = 60) {
     let totalP = 0, totalD = 0;
     if (!p.subPrograms) return 0;
     p.subPrograms.forEach(sub => {
@@ -171,10 +178,10 @@ function calculateProgress(p, limitWeek = 48) {
 }
 
 function getUnifiedTimeline(p) {
-    const combined = Array(48).fill(0);
+    const combined = Array(60).fill(0);
     if (!p.subPrograms) return combined;
     p.subPrograms.forEach(sub =>
-        sub.timeline.forEach((v, i) => { if (i < 48 && v === 1) combined[i] = 1; })
+        sub.timeline.forEach((v, i) => { if (i < 60 && v === 1) combined[i] = 1; })
     );
     return combined;
 }
@@ -186,6 +193,43 @@ function getLastFridayOfMonthJS(year, monthIndex) {
     let lastFriday = new Date(year, monthIndex, lastDay.getDate() - diffToFriday);
     lastFriday.setHours(0, 0, 0, 0);
     return lastFriday;
+}
+
+function getWeeksInMonthCount(year, monthIndex) {
+    let prevM = (monthIndex === 0) ? 11 : monthIndex - 1;
+    let prevY = (monthIndex === 0) ? year - 1 : year;
+    let start = getLastFridayOfMonthJS(prevY, prevM);
+    let end = getLastFridayOfMonthJS(year, monthIndex);
+    let days = Math.round((end - start) / (1000 * 60 * 60 * 24));
+    return Math.round(days / 7);
+}
+
+function normalizeSubProgramTimeline(sub) {
+    if (!sub.timeline || !Array.isArray(sub.timeline)) {
+        sub.timeline = Array(60).fill(0);
+        return;
+    }
+    if (sub.timeline.length === 60) return;
+    if (sub.timeline.length === 48) {
+        const newTl = Array(60).fill(0);
+        const newComp = [];
+        for (let m = 0; m < 12; m++) {
+            for (let w = 0; w < 4; w++) {
+                const oldIdx = m * 4 + w;
+                const newIdx = m * 5 + w;
+                newTl[newIdx] = sub.timeline[oldIdx] || 0;
+                if (sub.completed && sub.completed.includes(oldIdx)) {
+                    newComp.push(newIdx);
+                }
+            }
+        }
+        sub.timeline = newTl;
+        if (sub.completed) sub.completed = newComp;
+    } else {
+        const newTl = Array(60).fill(0);
+        for (let i = 0; i < Math.min(sub.timeline.length, 60); i++) newTl[i] = sub.timeline[i] || 0;
+        sub.timeline = newTl;
+    }
 }
 
 function getTimelineWeekInfo() {
@@ -209,7 +253,8 @@ function getTimelineWeekInfo() {
     let diffMillis = now.getTime() - week1Start.getTime();
     let diffDays = Math.round(diffMillis / (1000 * 60 * 60 * 24));
     let weekNumber = Math.floor(diffDays / 7) + 1;
-    let globalWeekIndex = (assignedMonthIndex * 4) + Math.min(weekNumber - 1, 3);
+    let maxW = getWeeksInMonthCount(assignedYear, assignedMonthIndex);
+    let globalWeekIndex = (assignedMonthIndex * 5) + Math.min(weekNumber - 1, maxW - 1);
     return { week: weekNumber, month: monthsLong[assignedMonthIndex], year: assignedYear, globalWeekIndex };
 }
 
@@ -478,8 +523,7 @@ function renderCharts() {
     Chart.defaults.color       = '#94a3b8';
 
     // Pillar Performance: Current Week Compliance Rate
-    const now1           = new Date();
-    const currentWeekPil = now1.getMonth() * 4 + Math.min(Math.floor((now1.getDate() - 1) / 7), 3);
+    const currentWeekPil = getTimelineWeekInfo().globalWeekIndex;
 
     function calcPillarCompliance(pillar) {
         let shouldBeDone = 0, actualDone = 0;
@@ -561,8 +605,7 @@ function renderCharts() {
     // ── Team Accountability: Current Week Compliance Rate ────────────────────
     // Hitung: done s.d. minggu ini / seharusnya done s.d. minggu ini x 100
     // Minggu yang belum tiba & aktivitas tidak ada di periode ini = dikecualikan
-    const now2           = new Date();
-    const currentWeekNow = now2.getMonth() * 4 + Math.min(Math.floor((now2.getDate() - 1) / 7), 3);
+    const currentWeekNow = getTimelineWeekInfo().globalWeekIndex;
 
     function calcComplianceRate(pic) {
         let shouldBeDone = 0, actualDone = 0;
@@ -738,7 +781,7 @@ function addSubProgramField(data = null) {
     const uniqueId  = subProgramCounter++;
     const name      = data ? data.name : '';
     const narasi    = data ? (data.createNarasi || '') : '';
-    const timeline  = data ? data.timeline : Array(48).fill(0);
+    const timeline  = data ? data.timeline : Array(60).fill(0);
     const div       = document.createElement('div');
     div.className   = 'bg-white p-6 rounded-[2rem] card-shadow border-2 border-slate-100 space-y-5 fade-in sub-program-form-item';
     div.innerHTML = `
@@ -759,18 +802,21 @@ function addSubProgramField(data = null) {
         <div class="space-y-3">
             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Schedule Mapping (Weekly Selection)</label>
             <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-                ${monthsLong.map((m, mIdx) => `
+                ${monthsLong.map((m, mIdx) => {
+                    const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+                    return `
                     <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100 group hover:border-mentari-blue/40 transition-colors">
                         <div class="text-[9px] font-black text-center text-slate-400 mb-2 border-b border-slate-200 pb-1.5 uppercase tracking-[0.2em] group-hover:text-cakrawala-blue">${m.substring(0, 3)}</div>
                         <div class="flex justify-center gap-1.5">
-                            ${[1,2,3,4].map(w => {
-                                const idx  = mIdx * 4 + (w - 1);
+                            ${Array.from({length: maxW}, (_, i) => i + 1).map(w => {
+                                const idx  = mIdx * 5 + (w - 1);
                                 const elId = `chk-${uniqueId}-${idx}`;
                                 const chk  = timeline[idx] === 1 ? 'checked' : '';
                                 return `<div class="relative"><input type="checkbox" id="${elId}" data-week="${idx}" class="week-checkbox hidden peer" ${chk}><label for="${elId}" class="w-8 h-8 text-xs font-black flex items-center justify-center border-2 rounded-lg border-white bg-white cursor-pointer shadow-sm transition-all hover:border-cakrawala-blue hover:text-nusantara-blue peer-checked:bg-nusantara-blue peer-checked:text-white peer-checked:border-nusantara-blue peer-checked:shadow-lg peer-checked:shadow-cakrawala-blue/30">${w}</label></div>`;
                             }).join('')}
                         </div>
-                    </div>`).join('')}
+                    </div>`;
+                }).join('')}
             </div>
         </div>`;
     container.appendChild(div);
@@ -819,7 +865,7 @@ function handleNewProgram(e) {
         const narasiInput = el.querySelector('.sub-narasi-input');
         const name        = nameInput   ? nameInput.value   : '';
         const narasi      = narasiInput ? narasiInput.value : '';
-        const timeline    = Array(48).fill(0);
+        const timeline    = Array(60).fill(0);
         el.querySelectorAll('.week-checkbox:checked').forEach(c => { timeline[parseInt(c.getAttribute('data-week'))] = 1; });
         if (timeline.includes(1) && name.trim() !== '') {
             let completed = [];
@@ -1024,14 +1070,15 @@ function renderTimelineMobile(data = programs) {
         const smeta  = STATUS_META[status];
         const unified = getUnifiedTimeline(p);
 
-        // Build mini week bar (group by month, 4 weeks each)
+        // Build mini week bar (group by month, dynamic weeks each)
         const weekBar = Array.from({length: 12}, (_, mIdx) => {
-            const weeks = unified.slice(mIdx * 4, mIdx * 4 + 4);
+            const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+            const weeks = unified.slice(mIdx * 5, mIdx * 5 + maxW);
             const hasPlan = weeks.some(v => v === 1);
             let allDone = true;
             weeks.forEach((v, wOff) => {
                 if (v !== 1) return;
-                const globalW = mIdx * 4 + wOff;
+                const globalW = mIdx * 5 + wOff;
                 let weekDone = true;
                 p.subPrograms.forEach(s => {
                     if (s.timeline[globalW] === 1 && !(s.completed && s.completed.includes(globalW))) weekDone = false;
@@ -1053,12 +1100,13 @@ function renderTimelineMobile(data = programs) {
             const subRate   = totalPlan === 0 ? 0 : Math.round((totalDone / totalPlan) * 100);
             const subUnified = sub.timeline;
             const subBar = Array.from({length: 12}, (_, mIdx) => {
-                const weeks = subUnified.slice(mIdx * 4, mIdx * 4 + 4);
+                const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+                const weeks = subUnified.slice(mIdx * 5, mIdx * 5 + maxW);
                 const hasPlan = weeks.some(v => v === 1);
                 let allDone = true;
                 weeks.forEach((v, wOff) => {
                     if (v !== 1) return;
-                    const gw = mIdx * 4 + wOff;
+                    const gw = mIdx * 5 + wOff;
                     if (!(sub.completed && sub.completed.includes(gw))) allDone = false;
                 });
                 if (!hasPlan) return `<div class="flex-1 h-2 rounded-sm bg-slate-100 mx-0.5"></div>`;
@@ -1151,9 +1199,11 @@ function renderTimeline(data = programs) {
         <th class="px-3 py-3 border-b border-r text-[10px] font-black uppercase tracking-widest text-center" style="width:50px;min-width:50px;" rowspan="2">Team</th>
         <th class="px-3 py-3 border-b border-r text-[10px] font-black uppercase tracking-widest text-center" style="width:50px;min-width:50px;" rowspan="2">Rate</th>`;
     weekTr.innerHTML = '';
-    monthsLong.forEach(m => {
-        monthTr.innerHTML += `<th colspan="4" class="border-b border-r text-center py-3 text-[10px] font-black uppercase tracking-widest" style="width:88px;min-width:88px;">${m}</th>`;
-        for (let i = 1; i <= 4; i++) weekTr.innerHTML += `<th class="text-center border-b border-r border-slate-100 py-3 text-[10px] font-bold" style="width:22px;min-width:22px;">${i}</th>`;
+    const totalWeeksYear = Array.from({length: 12}, (_, mIdx) => getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx)).reduce((a, b) => a + b, 0);
+    monthsLong.forEach((m, mIdx) => {
+        const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+        monthTr.innerHTML += `<th colspan="${maxW}" class="border-b border-r text-center py-3 text-[10px] font-black uppercase tracking-widest" style="width:${maxW * 22}px;min-width:${maxW * 22}px;">${m}</th>`;
+        for (let i = 1; i <= maxW; i++) weekTr.innerHTML += `<th class="text-center border-b border-r border-slate-100 py-3 text-[10px] font-bold" style="width:22px;min-width:22px;">${i}</th>`;
     });
 
     const currentWeekGlobal = getTimelineWeekInfo().globalWeekIndex;
@@ -1169,7 +1219,7 @@ function renderTimeline(data = programs) {
         const hasNarasi  = p.comment && p.comment.trim() !== '';
         const hasHistory = p.history && p.history.length > 0;
         const hasRiwayat = hasNarasi || hasHistory;
-        const colTotal  = 3 + 48;
+        const colTotal  = 3 + totalWeeksYear;
 
         // ── Program row ──────────────────────────────────────────────────────
         const tr     = document.createElement('tr');
@@ -1230,17 +1280,21 @@ function renderTimeline(data = programs) {
                 <span class="font-black text-[10px] ${prog === 100 ? 'text-emerald-500' : prog > 0 ? 'text-cakrawala-blue' : 'text-slate-400'}">${prog}%</span>
             </td>
 
-            ${unified.map((v, i) => {
-                let done = null;
-                p.subPrograms.forEach(s => {
-                    if (s.timeline[i] === 1) {
-                        if (done === null) done = true;
-                        if (!s.completed || !s.completed.includes(i)) done = false;
-                    }
-                });
-                return `<td class="p-0 border-b border-r h-14">
-                    ${done === null ? '' : `<div class="h-4 mx-1 rounded-md transition-colors ${done ? 'bg-cakrawala-blue' : 'bg-slate-200'}"></div>`}
-                </td>`;
+            ${Array.from({length: 12}, (_, mIdx) => {
+                const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+                return Array.from({length: maxW}, (_, wOff) => {
+                    const i = mIdx * 5 + wOff;
+                    let done = null;
+                    p.subPrograms.forEach(s => {
+                        if (s.timeline[i] === 1) {
+                            if (done === null) done = true;
+                            if (!s.completed || !s.completed.includes(i)) done = false;
+                        }
+                    });
+                    return `<td class="p-0 border-b border-r h-14">
+                        ${done === null ? '' : `<div class="h-4 mx-1 rounded-md transition-colors ${done ? 'bg-cakrawala-blue' : 'bg-slate-200'}"></div>`}
+                    </td>`;
+                }).join('');
             }).join('')}`;
         tbody.appendChild(tr);
 
@@ -1320,11 +1374,16 @@ function renderTimeline(data = programs) {
                 </td>
                 <td class="p-1 border-b border-r text-center text-[10px] font-bold text-slate-500" style="width:50px;">${p.pic}</td>
                 <td class="p-1 border-b border-r text-center font-black text-[10px] ${subRate === 100 ? 'text-emerald-500' : 'text-slate-500'}" style="width:50px;">${subRate}%</td>
-                ${sub.timeline.map((v, i) => {
-                    const done = sub.completed && sub.completed.includes(i);
-                    return `<td class="p-0 border-b border-r h-12">
-                        ${v ? `<div class="h-3 mx-1 rounded transition-colors ${done ? 'bg-emerald-500' : 'bg-slate-300'}"></div>` : ''}
-                    </td>`;
+                ${Array.from({length: 12}, (_, mIdx) => {
+                    const maxW = getWeeksInMonthCount(getTimelineWeekInfo().year, mIdx);
+                    return Array.from({length: maxW}, (_, wOff) => {
+                        const i = mIdx * 5 + wOff;
+                        const v = sub.timeline[i];
+                        const done = sub.completed && sub.completed.includes(i);
+                        return `<td class="p-0 border-b border-r h-12">
+                            ${v ? `<div class="h-3 mx-1 rounded transition-colors ${done ? 'bg-emerald-500' : 'bg-slate-300'}"></div>` : ''}
+                        </td>`;
+                    }).join('');
                 }).join('')}`;
             tbody.appendChild(subTr);
         });
@@ -1477,7 +1536,9 @@ function renderModalSubPrograms() {
         let btns = '';
         sub.timeline.forEach((isP, wIdx) => {
             if (isP === 1) {
-                btns += `<button onclick="toggleWeek(${sIdx}, ${wIdx})" class="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-[9px] font-black transition-all shadow-md ${sub.completed.includes(wIdx) ? 'week-btn-completed' : 'week-btn-planned'}"><span>${monthsLong[Math.floor(wIdx/4)].substring(0,3)}</span><span class="text-sm">W${(wIdx%4)+1}</span></button>`;
+                const mIdx = Math.floor(wIdx / 5);
+                const wNum = (wIdx % 5) + 1;
+                btns += `<button onclick="toggleWeek(${sIdx}, ${wIdx})" class="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-[9px] font-black transition-all shadow-md ${sub.completed.includes(wIdx) ? 'week-btn-completed' : 'week-btn-planned'}"><span>${monthsLong[mIdx].substring(0,3)}</span><span class="text-sm">W${wNum}</span></button>`;
             }
         });
         div.innerHTML = `<h5 class="text-xs font-black text-slate-800 uppercase tracking-widest">${escapeHtml(sub.name)}</h5><div class="flex flex-wrap gap-2">${btns || '<p class="text-xs italic text-slate-400">No scheduled weeks.</p>'}</div>`;
@@ -1492,7 +1553,7 @@ function toggleWeek(sIdx, wIdx) {
     renderModalSubPrograms(); updateModalStats();
 }
 
-function updateModalStats(limitWeek = 48) {
+function updateModalStats(limitWeek = 60) {
     let totalP = 0, totalD = 0;
     tempCompletedState.forEach(sub => {
         sub.timeline.forEach((v, i) => {
