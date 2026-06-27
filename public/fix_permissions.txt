@@ -1,0 +1,44 @@
+<?php
+// HAPUS FILE INI SETELAH DIGUNAKAN!
+// Akses: http://localhost/aml_final/public/fix_permissions.php
+
+require_once __DIR__ . '/../app/Core/Database.php';
+$db = Database::connect();
+
+echo "<pre style='font-family:monospace;font-size:13px;padding:20px;background:#0f172a;color:#e2e8f0;'>";
+echo "=== AML Permission Fix Tool ===\n\n";
+
+// Cek kolom yang ada
+$cols = [];
+$res = $db->query("SHOW COLUMNS FROM aml_users");
+while ($row = $res->fetch_assoc()) $cols[] = $row['Field'];
+echo "Kolom yang ada: " . implode(', ', $cols) . "\n\n";
+
+// Tambah kolom yang belum ada
+$needed = ['can_add' => 0, 'can_edit' => 0, 'can_delete' => 0];
+foreach ($needed as $col => $default) {
+    if (!in_array($col, $cols)) {
+        $db->query("ALTER TABLE aml_users ADD COLUMN `$col` TINYINT(1) NOT NULL DEFAULT 0");
+        echo "✓ Kolom '$col' ditambahkan\n";
+    } else {
+        echo "✓ Kolom '$col' sudah ada\n";
+    }
+}
+
+// Hapus can_edit_delete jika masih ada
+if (in_array('can_edit_delete', $cols)) {
+    $db->query("ALTER TABLE aml_users DROP COLUMN can_edit_delete");
+    echo "✓ Kolom lama 'can_edit_delete' dihapus\n";
+}
+
+echo "\n=== Data user saat ini ===\n";
+$res = $db->query("SELECT id, username, role, can_add, can_edit, can_delete FROM aml_users");
+while ($row = $res->fetch_assoc()) {
+    echo sprintf("%-4s %-15s %-12s add:%-2s edit:%-2s delete:%-2s\n",
+        $row['id'], $row['username'], $row['role'],
+        $row['can_add'], $row['can_edit'], $row['can_delete']
+    );
+}
+
+echo "\n✓ Selesai! Hapus file ini sekarang.\n";
+echo "</pre>";

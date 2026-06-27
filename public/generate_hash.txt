@@ -1,0 +1,16 @@
+<?php
+// HAPUS FILE INI SETELAH DIGUNAKAN!
+// Akses: http://domain-anda/generate_hash.php
+
+$password = 'patuhituprinsip';
+$hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+
+echo "<pre style='font-family:monospace;font-size:14px;padding:20px;'>";
+echo "Password : " . $password . "\n";
+echo "Hash     : " . $hash . "\n\n";
+echo "-- Jalankan SQL ini di phpMyAdmin:\n\n";
+echo "UPDATE aml_users SET password = '" . $hash . "' WHERE username = 'admin';\n\n";
+echo "-- ATAU jika belum insert:\n\n";
+echo "INSERT IGNORE INTO aml_users (username, password, full_name, role)\n";
+echo "VALUES ('admin', '" . $hash . "', 'Super Administrator', 'super_admin');\n";
+echo "</pre>";
